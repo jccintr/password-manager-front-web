@@ -1,16 +1,27 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { ThemeProvider } from './context/ThemeContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { ToastProvider } from './context/ToastContext';
 import AppNavbar from './components/AppNavbar';
 import ProtectedRoute from './components/ProtectedRoute';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
+import UnlockPage from './pages/UnlockPage';
 import VaultPage from './pages/VaultPage';
 import VaultItemFormPage from './pages/VaultItemFormPage';
 
 function PublicOnly({ children }) {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, token, vaultKey } = useAuth();
   if (isAuthenticated) return <Navigate to="/" replace />;
+  // Token sem chave → precisa desbloquear, não login
+  if (token && !vaultKey) return <Navigate to="/unlock" replace />;
+  return children;
+}
+
+function UnlockOnly({ children }) {
+  const { token, vaultKey } = useAuth();
+  if (!token) return <Navigate to="/login" replace />;
+  if (vaultKey) return <Navigate to="/" replace />;
   return children;
 }
 
@@ -33,6 +44,14 @@ function AppRoutes() {
             <PublicOnly>
               <RegisterPage />
             </PublicOnly>
+          }
+        />
+        <Route
+          path="/unlock"
+          element={
+            <UnlockOnly>
+              <UnlockPage />
+            </UnlockOnly>
           }
         />
         <Route
@@ -69,9 +88,11 @@ export default function App() {
   return (
     <ThemeProvider>
       <AuthProvider>
-        <BrowserRouter>
-          <AppRoutes />
-        </BrowserRouter>
+        <ToastProvider>
+          <BrowserRouter>
+            <AppRoutes />
+          </BrowserRouter>
+        </ToastProvider>
       </AuthProvider>
     </ThemeProvider>
   );

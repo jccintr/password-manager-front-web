@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Button, Card, Label, TextInput, Alert } from 'flowbite-react';
+import { Button, Card, Label, TextInput, Alert, Spinner } from 'flowbite-react';
 import { useAuth } from '../context/AuthContext';
 
 export default function RegisterPage() {
@@ -89,14 +89,21 @@ export default function RegisterPage() {
               onChange={(e) => setConfirm(e.target.value)}
             />
           </div>
-          <Button type="submit" disabled={loading}>
-            {loading ? 'Criando…' : 'Criar conta'}
+          <Button type="submit" color="blue" disabled={loading} className="w-full">
+            {loading ? (
+              <span className="flex items-center justify-center gap-2">
+                <Spinner size="sm" light />
+                Criando…
+              </span>
+            ) : (
+              'Criar conta'
+            )}
           </Button>
         </form>
 
         <p className="text-center text-sm text-gray-600 dark:text-gray-300">
           Já tem conta?{' '}
-          <Link to="/login" className="text-primary-600 hover:underline dark:text-primary-400">
+          <Link to="/login" className="font-medium text-blue-600 hover:underline dark:text-blue-400">
             Entrar
           </Link>
         </p>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Alert,
@@ -7,19 +7,31 @@ import {
   Spinner,
   TextInput,
   Badge,
+  Modal,
+  ModalHeader,
+  ModalBody,
+  ModalFooter,
 } from 'flowbite-react';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
 import { listVaultItems, deleteVaultItem } from '../api/vaultApi';
 import { decryptPayload } from '../crypto/vaultCrypto';
+import { IconEye, IconEyeOff, IconCopy } from '../components/Icons';
+
+const REVEAL_MS = 5000;
 
 export default function VaultPage() {
   const { token, vaultKey } = useAuth();
+  const { showToast } = useToast();
   const [rawItems, setRawItems] = useState([]);
   const [entries, setEntries] = useState([]);
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [revealed, setRevealed] = useState({});
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+  const hideTimers = useRef({});
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -57,6 +69,13 @@ export default function VaultPage() {
     load();
   }, [load]);
 
+  useEffect(() => {
+    const timers = hideTimers.current;
+    return () => {
+      Object.values(timers).forEach((t) => clearTimeout(t));
+    };
+  }, []);
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return entries;
@@ -69,26 +88,65 @@ export default function VaultPage() {
     );
   }, [entries, query]);
 
-  const handleDelete = async (id) => {
-    if (!window.confirm('Excluir este item do cofre?')) return;
-    try {
-      await deleteVaultItem(id, token);
-      setEntries((prev) => prev.filter((e) => e.id !== id));
-      setRawItems((prev) => prev.filter((i) => i._id !== id));
-    } catch (err) {
-      setError(err.message);
+  const clearRevealTimer = (id) => {
+    if (hideTimers.current[id]) {
+      clearTimeout(hideTimers.current[id]);
+      delete hideTimers.current[id];
     }
   };
 
+  const revealPassword = (id) => {
+    clearRevealTimer(id);
+    setRevealed((prev) => ({ ...prev, [id]: true }));
+    hideTimers.current[id] = setTimeout(() => {
+      setRevealed((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      delete hideTimers.current[id];
+    }, REVEAL_MS);
+  };
+
+  const hidePassword = (id) => {
+    clearRevealTimer(id);
+    setRevealed((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  };
+
   const toggleReveal = (id) => {
-    setRevealed((prev) => ({ ...prev, [id]: !prev[id] }));
+    if (revealed[id]) {
+      hidePassword(id);
+    } else {
+      revealPassword(id);
+    }
   };
 
   const copyText = async (text) => {
     try {
       await navigator.clipboard.writeText(text);
+      showToast('Copiado para a área de transferência');
     } catch {
-      /* ignore */
+      showToast('Não foi possível copiar', 'error');
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await deleteVaultItem(deleteTarget.id, token);
+      setEntries((prev) => prev.filter((e) => e.id !== deleteTarget.id));
+      setRawItems((prev) => prev.filter((i) => i._id !== deleteTarget.id));
+      showToast('Item excluído');
+      setDeleteTarget(null);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -101,7 +159,7 @@ export default function VaultPage() {
             {rawItems.length} item(ns) · busca apenas neste dispositivo
           </p>
         </div>
-        <Button as={Link} to="/items/new">
+        <Button as={Link} to="/items/new" color="blue">
           Nova senha
         </Button>
       </div>
@@ -161,15 +219,23 @@ export default function VaultPage() {
                       <code className="rounded bg-gray-100 px-2 py-1 text-sm dark:bg-gray-800">
                         {revealed[entry.id] ? entry.password : '••••••••'}
                       </code>
-                      <Button size="xs" color="gray" onClick={() => toggleReveal(entry.id)}>
-                        {revealed[entry.id] ? 'Ocultar' : 'Mostrar'}
+                      <Button
+                        size="xs"
+                        color="gray"
+                        onClick={() => toggleReveal(entry.id)}
+                        title={revealed[entry.id] ? 'Ocultar' : 'Mostrar'}
+                        aria-label={revealed[entry.id] ? 'Ocultar senha' : 'Mostrar senha'}
+                      >
+                        {revealed[entry.id] ? <IconEyeOff /> : <IconEye />}
                       </Button>
                       <Button
                         size="xs"
                         color="light"
                         onClick={() => copyText(entry.password)}
+                        title="Copiar"
+                        aria-label="Copiar senha"
                       >
-                        Copiar
+                        <IconCopy />
                       </Button>
                     </div>
                   )}
@@ -178,7 +244,11 @@ export default function VaultPage() {
                   <Button size="sm" color="light" as={Link} to={`/items/${entry.id}/edit`}>
                     Editar
                   </Button>
-                  <Button size="sm" color="failure" onClick={() => handleDelete(entry.id)}>
+                  <Button
+                    size="sm"
+                    color="failure"
+                    onClick={() => setDeleteTarget({ id: entry.id, title: entry.title })}
+                  >
                     Excluir
                   </Button>
                 </div>
@@ -187,6 +257,31 @@ export default function VaultPage() {
           ))}
         </div>
       )}
+
+      <Modal show={Boolean(deleteTarget)} onClose={() => !deleting && setDeleteTarget(null)}>
+        <ModalHeader>Excluir item</ModalHeader>
+        <ModalBody>
+          <p className="text-gray-600 dark:text-gray-300">
+            Tem certeza que deseja excluir{' '}
+            <strong>{deleteTarget?.title || 'este item'}</strong>? Esta ação não pode ser desfeita.
+          </p>
+        </ModalBody>
+        <ModalFooter>
+          <Button color="failure" onClick={confirmDelete} disabled={deleting}>
+            {deleting ? (
+              <span className="flex items-center gap-2">
+                <Spinner size="sm" light />
+                Excluindo…
+              </span>
+            ) : (
+              'Excluir'
+            )}
+          </Button>
+          <Button color="gray" onClick={() => setDeleteTarget(null)} disabled={deleting}>
+            Cancelar
+          </Button>
+        </ModalFooter>
+      </Modal>
     </div>
   );
 }
